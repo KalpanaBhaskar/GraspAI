@@ -1,0 +1,79 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# ─── Dependencies ─────────────────────────────────────────────────────────────
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# ─── Next.js / build output ───────────────────────────────────────────────────
+/.next/
+/out/
+/build
+/dist
+
+# ─── Testing & coverage ───────────────────────────────────────────────────────
+/coverage
+*.lcov
+
+# ─── Environment & secrets (never commit) ─────────────────────────────────────
+.env
+.env.*
+!.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ─── Vercel / deployment ──────────────────────────────────────────────────────
+.vercel
+
+# ─── TypeScript / tooling cache ─────────────────────────────────────────────
+*.tsbuildinfo
+next-env.d.ts
+
+# ─── Logs & debug ───────────────────────────────────────────────────────────
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+lerna-debug.log*
+
+# ─── OS & editor ──────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.swp
+*.swo
+*~
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+*.pem
+*.log
+.cache
+.turbo
+*.lnk
+
+# Nested duplicate folder (accidental clone/copy)
+/GraspAI/
+
+# ─── Internal docs (public repo uses README only) ───────────────────────────
+/app_context.md
+/task.md
+/AGENTS.md
+/CLAUDE.md
+/walkthrough.md
