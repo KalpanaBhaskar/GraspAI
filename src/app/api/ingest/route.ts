@@ -35,7 +35,6 @@ export interface AnalysisResult {
   subject: string;
   entities: {
     deadline: string | null;
-    urgency: 'due_soon' | 'none';
     topic: string;
     urls: string[];
     locations: string[];
@@ -96,41 +95,26 @@ export async function POST(request: NextRequest) {
       }, { status: 429 });
     }
 
-    // 4. Build the deep-extraction prompt — ULTRA-STRICT anti-hallucination
-    const prompt = `You are GraspAI, an expert image analysis engine. Analyze this image and extract ONLY what is actually visible.
+    // 4. Build the deep-extraction prompt
+    const prompt = `You are GraspAI, an expert image analysis engine. Analyze this image deeply and extract ALL visible information.
 
-ABSOLUTE RULES — VIOLATION MEANS FAILURE:
-
-1. DEADLINE RULE (MOST IMPORTANT):
-   - Set "deadline" to a date string ONLY if you can see an explicit, complete date written on the image (e.g. "May 15, 2026", "15/05/2026", "2026-05-15", "April 30").
-   - If the image says vague things like "in 3 days", "next week", "soon", "ASAP" — set "deadline" to null and set "urgency" to "due_soon".
-   - If there is NO date and NO urgency language — set "deadline" to null and "urgency" to "none".
-   - NEVER compute or calculate a date. NEVER guess. NEVER invent a date that isn't literally printed on the image.
-   
-   WRONG: Image says "Apply within 3 days" → deadline: "2026-05-18"  ← THIS IS HALLUCINATION
-   RIGHT: Image says "Apply within 3 days" → deadline: null, urgency: "due_soon"
-   RIGHT: Image says "Deadline: April 30" → deadline: "2026-04-30", urgency: "none"
-
-2. CONTENT RULE: Extract ONLY text and information visible in the image. Never add context from your training data.
-
-3. CHAIN_ID RULE: Use a short consistent slug so the SAME topic always gets the SAME chain_id:
-   - Database notes, queries, ER diagrams → "database_notes"
-   - Machine learning, neural networks → "ml_architecture"  
-   - Internship/job listings → "internship_applications"
-   - Thermodynamics, heat engines → "thermodynamics_notes"
-
-4. CATEGORY RULE:
-   - "whats_next" → job applications, events, tasks with deadlines or urgency
-   - "working_on" → study notes, lecture content, diagrams, code
-   - "other" → receipts, bills, contacts, miscellaneous
+CRITICAL RULES:
+- Extract ONLY what is actually visible in the image. NEVER invent or assume information.
+- For "deadline": extract ONLY if a specific date is explicitly written. Otherwise set to null.
+- For "chain_id": create a short, consistent semantic slug (e.g. "database_notes", "ml_architecture", "internship_applications"). Two images on the same topic MUST get the same chain_id.
+- For "category": classify as:
+  * "whats_next" — job applications, event deadlines, tasks with urgency
+  * "working_on" — study notes, lecture content, project diagrams, code
+  * "other" — receipts, bills, contacts, miscellaneous
+- For "raw_text": transcribe key visible text accurately, not just a summary.
+- For "key_terms": extract 3-5 important keywords visible in the image for semantic search.
 
 Return this exact JSON schema:
 {
   "intent": "study_material | job_application | event_attendance | general_note | receipt | contact_info | project_diagram",
   "subject": "Primary topic in under 10 words",
   "entities": {
-    "deadline": "YYYY-MM-DD or null (ONLY if explicitly written)",
-    "urgency": "due_soon | none",
+    "deadline": "YYYY-MM-DD or null",
     "topic": "Specific sub-topic",
     "urls": ["any URLs visible"],
     "locations": ["any locations mentioned"],

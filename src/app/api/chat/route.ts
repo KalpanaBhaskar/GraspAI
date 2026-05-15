@@ -25,110 +25,91 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.SUPERMEMORY_TOKEN}`,
       },
-      body: JSON.stringify({ q: message, limit: 15 }),
+      body: JSON.stringify({ q: message, limit: 10 }),
     });
 
     let results: any[] = [];
     if (smResponse.ok) {
       const smData = await smResponse.json();
       results = smData.results || [];
-      console.log('[Chat] Found', results.length, 'raw Supermemory results.');
+      console.log('[Chat] Found', results.length, 'relevant memories.');
     } else {
       console.warn('[Chat] Supermemory search failed:', smResponse.status);
     }
 
-    // 2. Build context for Gemini — let the LLM decide which results are truly relevant
-    const contextDocs = results.map((r: any, idx: number) => {
-      const chunks = r.chunks?.map((c: any) => c.content).join(' ') || r.content || '';
-      return {
-        index: idx,
-        subject: r.metadata?.subject || r.title || 'Untitled',
-        chainId: r.metadata?.chain_id || 'uncategorized',
-        content: chunks,
-        url: r.metadata?.url || null,
-        deadline: r.metadata?.deadline || null,
-        intent: r.metadata?.intent || 'general_note',
-        topic: r.metadata?.topic || '',
-      };
-    });
+    // 2. Extract unique image URLs and cluster metadata
+    const relevantImages: string[] = [];
+    const clusterMap: Record<string, { title: string; images: string[]; deadline: string | null; intent: string }> = {};
+    const seenUrls = new Set<string>();
 
-    const contextText = contextDocs
-      .map(d => `[${d.index}] Subject: "${d.subject}" | Chain: ${d.chainId} | Topic: ${d.topic} | Content: ${d.content} | Deadline: ${d.deadline || 'None'}`)
-      .join('\n\n');
+    for (const r of results) {
+      const url = r.metadata?.url;
+      const chainId = r.metadata?.chain_id || 'uncategorized';
+      const subject = r.metadata?.subject || r.title || 'Untitled';
+      const deadline = r.metadata?.deadline || null;
+      const intent = r.metadata?.intent || 'general_note';
 
-    // 3. Ask Gemini to answer AND select only the relevant document indices
+      if (url && !seenUrls.has(url)) {
+        seenUrls.add(url);
+        relevantImages.push(url);
+
+        if (!clusterMap[chainId]) {
+          clusterMap[chainId] = { title: subject, images: [], deadline, intent };
+        }
+        clusterMap[chainId].images.push(url);
+      }
+    }
+
+    // Convert cluster map to array
+    const clusters = Object.entries(clusterMap).map(([chainId, data]) => ({
+      chainId,
+      title: data.title,
+      images: data.images,
+      deadline: data.deadline,
+      intent: data.intent,
+      imageCount: data.images.length,
+    }));
+
+    // 3. Compile context for Gemini
+    const contextText = results
+      .map((r: any) => {
+        const chunks = r.chunks?.map((c: any) => c.content).join(' ') || r.content || '';
+        return `Document: "${r.metadata?.subject || r.title || 'Untitled'}"\nChain: ${r.metadata?.chain_id || 'N/A'}\nContent: ${chunks}\nImage: ${r.metadata?.url || 'N/A'}\nDeadline: ${r.metadata?.deadline || 'None'}`;
+      })
+      .join('\n\n---\n\n');
+
+    // 4. Generate answer with Gemini
     const model = genAI.getGenerativeModel({ 
       model: 'gemini-3.1-flash-lite',
       generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.15,
+        temperature: 0.3,
         maxOutputTokens: 1024,
       }
     });
 
-    const prompt = `You are GraspAI, a precise memory assistant. The user has uploaded images that were analyzed and stored.
+    const prompt = `You are GraspAI, a helpful and precise memory assistant. The user's uploaded images have been analyzed and stored as knowledge. 
 
 User's question: "${message}"
 
-Here are ALL retrieved documents (some may be IRRELEVANT):
-${contextText || '(No documents found)'}
-
-YOUR TASK:
-1. Read the user's question carefully.
-2. From the documents above, select ONLY the ones that ACTUALLY answer the user's question. Be strict — if a document is about a different topic, EXCLUDE it.
-3. Write a clear, concise answer based ONLY on the relevant documents.
-4. List the indices of the relevant documents.
+Retrieved context from their memory graph:
+${contextText || '(No relevant memories found)'}
 
 CRITICAL RULES:
-- If the user asks about "DBMS" or "database", ONLY include documents about databases. Do NOT include machine learning, thermodynamics, or other topics.
-- NEVER hallucinate. Only reference information from the documents.
-- If no documents are relevant, say so honestly.
+- Answer ONLY based on the retrieved context above. NEVER hallucinate or assume facts.
+- If you find matching documents, summarize them clearly and mention which images are relevant.
+- If the user asks for a list or sequence, format it as a clean numbered list or table.
+- If the user asks about deadlines, only mention deadlines that are explicitly in the context.
+- If no relevant memories are found, say: "I couldn't find anything matching that in your uploaded memories. Try uploading more images related to this topic."
+- Be concise, direct, and helpful.
+- When referencing images, mention their subject/title so the user knows which card to look at.`;
 
-Return this JSON:
-{
-  "answer": "Your clear, concise answer text",
-  "relevant_indices": [0, 2, 5],
-  "cluster_title": "A short title for the collection of relevant images (e.g. 'Database Notes', 'Internship Applications')"
-}`;
-
-    console.log('[Chat] Calling Gemini for filtered answer...');
+    console.log('[Chat] Calling Gemini for answer...');
     const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
-
-    let geminiResponse: { answer: string; relevant_indices: number[]; cluster_title: string };
-    try {
-      geminiResponse = JSON.parse(responseText);
-    } catch {
-      // Fallback if JSON parsing fails
-      geminiResponse = {
-        answer: responseText,
-        relevant_indices: contextDocs.map(d => d.index),
-        cluster_title: 'Search Results'
-      };
-    }
-
-    // 4. Filter to ONLY the relevant documents
-    const relevantDocs = geminiResponse.relevant_indices
-      .filter(i => i >= 0 && i < contextDocs.length)
-      .map(i => contextDocs[i])
-      .filter(d => d.url); // only docs with actual images
-
-    // 5. Build ONE unified cluster from all relevant images
-    const relevantImages = relevantDocs.map(d => d.url!);
-    const uniqueImages = [...new Set(relevantImages)];
-
-    const clusters = uniqueImages.length > 0 ? [{
-      chainId: `chat_cluster_${Date.now()}`,
-      title: geminiResponse.cluster_title || 'Search Results',
-      images: uniqueImages,
-      deadline: relevantDocs.find(d => d.deadline)?.deadline || null,
-      intent: relevantDocs[0]?.intent || 'general_note',
-      imageCount: uniqueImages.length,
-    }] : [];
+    const answer = result.response.text();
 
     return NextResponse.json({
-      answer: geminiResponse.answer,
-      images: uniqueImages,
+      answer,
+      images: relevantImages,
       clusters,
     });
   } catch (error: any) {
