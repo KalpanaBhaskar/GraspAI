@@ -1,6 +1,6 @@
 # GraspAI
 
-**Turn screenshot graveyards into an intelligent, actionable memory graph.**
+**Turn piles of screenshots and images into organised information.**
 
 GraspAI is a proactive **Intent Rescue** platform for students and professionals who capture high-value information in photos—lecture notes, job postings, event flyers, receipts—and lose it in an endless camera roll. Instead of folders and manual sorting, GraspAI **reads each image**, extracts structured intent with vision AI, stores it in a semantic knowledge graph, and surfaces what matters next on a beautiful dashboard—with a chat assistant that answers questions from your personal memories.
 
