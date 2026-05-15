@@ -9,11 +9,7 @@ export default function OtherImagesFeed() {
   const { feedItems, searchQuery, setSearchQuery, openImageViewer } = useStore();
 
   const otherItems = useMemo(() => {
-    let items = feedItems.filter(item => {
-      const isWhatsNext = item.deadline !== null || item.importance >= 8 || ['job_application', 'event_attendance'].includes(item.intentType);
-      const isWorkingOn = !isWhatsNext && ['study_material', 'general_note'].includes(item.intentType);
-      return !isWhatsNext && !isWorkingOn;
-    });
+    let items = feedItems.filter(item => item.category === 'other');
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -31,10 +27,10 @@ export default function OtherImagesFeed() {
   };
 
   return (
-    <div className="w-full flex flex-col gap-6 overflow-y-auto h-full custom-scrollbar pr-2">
+    <div className="w-full flex flex-col gap-6 overflow-y-auto h-full custom-scrollbar pr-1">
       <div className="flex flex-col gap-3 shrink-0">
         <div className="flex items-center bg-white rounded-xl px-4 py-2 border border-[#e2e2e2] shadow-sm">
-          <Search className="text-[#454652] mr-2" fontSize="small" />
+          <Search className="text-[#454652] mr-2" sx={{ fontSize: 18 }} />
           <input
             type="text"
             placeholder="Search other images..."
@@ -46,8 +42,8 @@ export default function OtherImagesFeed() {
       </div>
 
       <div className="flex flex-col gap-3 shrink-0">
-        <h2 className="text-lg font-bold text-[#1a237e]">Other Images</h2>
-        <div className="flex overflow-x-auto gap-4 pb-2 pt-1 snap-x snap-mandatory custom-scrollbar">
+        <h2 className="text-base sm:text-lg font-bold text-[#1a237e]">Other Images</h2>
+        <div className="flex overflow-x-auto gap-3 sm:gap-4 pb-2 pt-1 snap-x snap-mandatory custom-scrollbar">
           <AnimatePresence>
             {otherItems.length === 0 ? (
               <div className="text-[#767683] text-sm italic py-4">No other images found.</div>
@@ -61,7 +57,7 @@ export default function OtherImagesFeed() {
                   exit={{ opacity: 0, scale: 0.9 }}
                   whileHover={{ y: -4 }}
                   onClick={() => handleCardClick(item)}
-                  className="min-w-[150px] w-[150px] h-[220px] shrink-0 rounded-[20px] overflow-hidden relative shadow-md cursor-pointer snap-start group bg-black"
+                  className="min-w-[130px] w-[130px] sm:min-w-[150px] sm:w-[150px] h-[190px] sm:h-[220px] shrink-0 rounded-[18px] sm:rounded-[20px] overflow-hidden relative shadow-md cursor-pointer snap-start group bg-black"
                 >
                   <img 
                     src={item.imageUrl} alt={item.title} 
@@ -70,13 +66,13 @@ export default function OtherImagesFeed() {
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
                   
-                  <div className="absolute top-3 left-3 bg-white/20 backdrop-blur-md text-white text-[10px] font-bold px-2 py-1 rounded-md capitalize">
+                  <div className="absolute top-2.5 left-2.5 bg-white/20 backdrop-blur-md text-white text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded-md capitalize">
                     {item.intentType.replace('_', ' ')}
                   </div>
 
-                  <div className="absolute bottom-0 left-0 right-0 p-4">
-                    <h3 className="text-white font-bold text-sm leading-tight mb-1 line-clamp-2">{item.title}</h3>
-                    <p className="text-white/80 text-[10px] line-clamp-2">{item.description}</p>
+                  <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4">
+                    <h3 className="text-white font-bold text-xs sm:text-sm leading-tight mb-0.5 line-clamp-2">{item.title}</h3>
+                    <p className="text-white/80 text-[9px] sm:text-[10px] line-clamp-2">{item.description}</p>
                   </div>
                 </motion.div>
               ))

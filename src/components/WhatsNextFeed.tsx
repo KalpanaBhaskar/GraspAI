@@ -21,10 +21,10 @@ export default function WhatsNextFeed() {
     return items;
   }, [feedItems, searchQuery]);
 
-  // Whats Next: Items that have a deadline OR urgent intent types
+  // What's Next: items with category "whats_next" — sorted by deadline first, then importance
   const whatsNextItems = useMemo(() => {
     return filteredItems
-      .filter(item => item.deadline !== null || item.importance >= 8 || ['job_application', 'event_attendance'].includes(item.intentType))
+      .filter(item => item.category === 'whats_next')
       .sort((a, b) => {
         if (a.deadline && b.deadline) return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
         if (a.deadline) return -1;
@@ -33,12 +33,9 @@ export default function WhatsNextFeed() {
       });
   }, [filteredItems]);
 
-  // Working On: study_material and general_note items only, grouped by chainId
+  // Working On: items with category "working_on", grouped by chainId, sorted by most recent upload
   const workingOnClusters = useMemo(() => {
-    const workingItems = filteredItems.filter(item => 
-      !whatsNextItems.find(wn => wn.id === item.id) &&
-      ['study_material', 'general_note'].includes(item.intentType)
-    );
+    const workingItems = filteredItems.filter(item => item.category === 'working_on');
 
     const clusters: Record<string, FeedItem[]> = {};
     workingItems.forEach(item => {
@@ -51,7 +48,7 @@ export default function WhatsNextFeed() {
       const latestB = Math.max(...b.map(i => new Date(i.createdAt).getTime()));
       return latestB - latestA;
     });
-  }, [filteredItems, whatsNextItems]);
+  }, [filteredItems]);
 
   // Single card click → open just that one image
   const handleSingleClick = (item: FeedItem) => {
@@ -66,11 +63,11 @@ export default function WhatsNextFeed() {
   };
 
   return (
-    <div className="w-full flex flex-col gap-6 overflow-y-auto h-full custom-scrollbar pr-2">
+    <div className="w-full flex flex-col gap-5 overflow-y-auto h-full custom-scrollbar pr-1">
       {/* Search */}
       <div className="flex flex-col gap-3 shrink-0">
         <div className="flex items-center bg-white rounded-xl px-4 py-2 border border-[#e2e2e2] shadow-sm">
-          <Search className="text-[#454652] mr-2" fontSize="small" />
+          <Search className="text-[#454652] mr-2" sx={{ fontSize: 18 }} />
           <input
             type="text"
             placeholder="Search memory graph..."
@@ -82,9 +79,9 @@ export default function WhatsNextFeed() {
       </div>
 
       {/* Section 1: What's Next */}
-      <div className="flex flex-col gap-3 shrink-0">
-        <h2 className="text-lg font-bold text-[#1a237e]">Whats next?</h2>
-        <div className="flex overflow-x-auto gap-4 pb-2 pt-1 snap-x snap-mandatory custom-scrollbar" style={{ scrollbarGutter: 'stable' }}>
+      <div className="flex flex-col gap-2.5 shrink-0">
+        <h2 className="text-base sm:text-lg font-bold text-[#1a237e]">What&apos;s next?</h2>
+        <div className="flex overflow-x-auto gap-3 sm:gap-4 pb-2 pt-1 snap-x snap-mandatory custom-scrollbar" style={{ scrollbarGutter: 'stable' }}>
           <AnimatePresence>
             {whatsNextItems.length === 0 ? (
               <div className="text-[#767683] text-sm italic py-4">No upcoming tasks or deadlines.</div>
@@ -98,7 +95,7 @@ export default function WhatsNextFeed() {
                   exit={{ opacity: 0, scale: 0.9 }}
                   whileHover={{ y: -4 }}
                   onClick={() => handleSingleClick(item)}
-                  className="min-w-[150px] w-[150px] h-[220px] shrink-0 rounded-[20px] overflow-hidden relative shadow-md cursor-pointer snap-start group bg-black"
+                  className="min-w-[130px] w-[130px] sm:min-w-[150px] sm:w-[150px] h-[190px] sm:h-[220px] shrink-0 rounded-[18px] sm:rounded-[20px] overflow-hidden relative shadow-md cursor-pointer snap-start group bg-black"
                 >
                   <img 
                     src={item.imageUrl} alt={item.title} 
@@ -107,13 +104,13 @@ export default function WhatsNextFeed() {
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
                   {item.deadline && (
-                    <div className="absolute top-3 left-3 bg-[#ffdad6] text-[#ba1a1a] text-[10px] font-bold px-2 py-1 rounded-md shadow-sm">
+                    <div className="absolute top-2.5 left-2.5 bg-[#ffdad6] text-[#ba1a1a] text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded-md shadow-sm">
                       Due: {new Date(item.deadline).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </div>
                   )}
-                  <div className="absolute bottom-0 left-0 right-0 p-4">
-                    <h3 className="text-white font-bold text-sm leading-tight mb-1 line-clamp-2">{item.title}</h3>
-                    <p className="text-white/80 text-[10px] line-clamp-2">{item.description}</p>
+                  <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4">
+                    <h3 className="text-white font-bold text-xs sm:text-sm leading-tight mb-0.5 line-clamp-2">{item.title}</h3>
+                    <p className="text-white/80 text-[9px] sm:text-[10px] line-clamp-2">{item.description}</p>
                   </div>
                 </motion.div>
               ))
@@ -123,9 +120,9 @@ export default function WhatsNextFeed() {
       </div>
 
       {/* Section 2: What You Are Working On */}
-      <div className="flex flex-col gap-3 shrink-0">
-        <h2 className="text-lg font-bold text-[#1a237e]">What you are working on</h2>
-        <div className="flex overflow-x-auto gap-4 pb-2 pt-1 snap-x snap-mandatory custom-scrollbar" style={{ scrollbarGutter: 'stable' }}>
+      <div className="flex flex-col gap-2.5 shrink-0">
+        <h2 className="text-base sm:text-lg font-bold text-[#1a237e]">What you are working on</h2>
+        <div className="flex overflow-x-auto gap-3 sm:gap-4 pb-2 pt-1 snap-x snap-mandatory custom-scrollbar" style={{ scrollbarGutter: 'stable' }}>
           <AnimatePresence>
             {workingOnClusters.length === 0 ? (
               <div className="text-[#767683] text-sm italic py-4">No recent workspaces found.</div>
@@ -142,7 +139,7 @@ export default function WhatsNextFeed() {
                     exit={{ opacity: 0, scale: 0.9 }}
                     whileHover={{ y: -4 }}
                     onClick={() => handleClusterClick(cluster)}
-                    className="min-w-[150px] w-[150px] h-[220px] shrink-0 rounded-[20px] overflow-hidden relative shadow-md cursor-pointer snap-start group bg-black"
+                    className="min-w-[130px] w-[130px] sm:min-w-[150px] sm:w-[150px] h-[190px] sm:h-[220px] shrink-0 rounded-[18px] sm:rounded-[20px] overflow-hidden relative shadow-md cursor-pointer snap-start group bg-black"
                   >
                     <img 
                       src={primaryItem.imageUrl} alt={primaryItem.title} 
@@ -152,14 +149,14 @@ export default function WhatsNextFeed() {
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
                     
                     {hasMultiple && (
-                      <div className="absolute top-3 right-3 bg-white/20 backdrop-blur-md text-white text-[10px] font-bold px-2 py-1 rounded-md">
+                      <div className="absolute top-2.5 right-2.5 bg-white/20 backdrop-blur-md text-white text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded-md">
                         {cluster.length} images
                       </div>
                     )}
 
-                    <div className="absolute bottom-0 left-0 right-0 p-4">
-                      <h3 className="text-white font-bold text-sm leading-tight mb-1 line-clamp-2">{primaryItem.title}</h3>
-                      <p className="text-white/80 text-[10px] line-clamp-2">{primaryItem.description}</p>
+                    <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4">
+                      <h3 className="text-white font-bold text-xs sm:text-sm leading-tight mb-0.5 line-clamp-2">{primaryItem.title}</h3>
+                      <p className="text-white/80 text-[9px] sm:text-[10px] line-clamp-2">{primaryItem.description}</p>
                     </div>
                   </motion.div>
                 );
@@ -170,7 +167,7 @@ export default function WhatsNextFeed() {
       </div>
 
       {/* Bottom Chat Shortcut */}
-      <div className="mt-auto shrink-0 pb-2">
+      <div className="mt-auto shrink-0 pb-1">
         <ChatbotInput />
       </div>
     </div>

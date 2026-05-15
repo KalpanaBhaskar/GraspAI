@@ -1,32 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import sharp from 'sharp';
-import Together from 'together-ai';
 import crypto from 'crypto';
 
-// Initialize the Together AI SDK
-const together = new Together({ apiKey: process.env.TOGETHER_API_KEY || '' });
+// ──────────────── Gemini 3.1 Flash Lite ────────────────
+// Free tier: 30 req/min, 1500 req/day
+// We enforce 5 req/min (12s gap) to stay safely under limits
+// ────────────────────────────────────────────────────────
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
-// In-memory deduplication cache: hash → analysis result
-const analysisCache = new Map<string, AnalyzeIntentResponse>();
+// In-memory deduplication cache: md5(image) → analysis result
+const analysisCache = new Map<string, AnalysisResult>();
 
-// Rate limiter
-let lastApiCall = 0;
-const MIN_GAP_MS = 2000;
+// Rate limiter — enforces 12-second gap (5 req/min)
+const callTimestamps: number[] = [];
+const MAX_CALLS_PER_MIN = 5;
+const WINDOW_MS = 60_000;
 
-export interface AnalyzeIntentResponse {
+function checkRateLimit(): { allowed: boolean; waitMs: number } {
+  const now = Date.now();
+  // Remove timestamps older than 1 minute
+  while (callTimestamps.length > 0 && callTimestamps[0] < now - WINDOW_MS) {
+    callTimestamps.shift();
+  }
+  if (callTimestamps.length >= MAX_CALLS_PER_MIN) {
+    const waitMs = callTimestamps[0] + WINDOW_MS - now;
+    return { allowed: false, waitMs };
+  }
+  return { allowed: true, waitMs: 0 };
+}
+
+export interface AnalysisResult {
   intent: string;
   subject: string;
   entities: {
     deadline: string | null;
+    urgency: 'due_soon' | 'none';
     topic: string;
     urls: string[];
     locations: string[];
     key_people: string[];
+    key_terms: string[];
   };
   raw_text: string;
   chain_id: string;
+  category: 'whats_next' | 'working_on' | 'other';
   priority_weight: number;
-  logical_transition: string;
   suggested_action: string;
   confidence_score: number;
   detected_language: string;
@@ -41,123 +60,126 @@ export async function POST(request: NextRequest) {
     if (!file) {
       return NextResponse.json({ error: 'No image provided' }, { status: 400 });
     }
-
     if (!publicUrl) {
       return NextResponse.json({ error: 'Supabase publicUrl not provided' }, { status: 400 });
     }
-
-    if (!process.env.TOGETHER_API_KEY) {
-      console.error('TOGETHER_API_KEY is missing in environment variables.');
-      return NextResponse.json({ error: 'Server configuration error: TOGETHER_API_KEY missing. Please add it to your .env.local file.' }, { status: 500 });
+    if (!process.env.GEMINI_API_KEY) {
+      return NextResponse.json({ error: 'GEMINI_API_KEY is missing. Add it to your .env.local file.' }, { status: 500 });
     }
 
-    // 1. Convert File to ArrayBuffer and compress AGGRESSIVELY to minimize token usage
+    // 1. Compress image for efficient token usage
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
     const compressedBuffer = await sharp(buffer)
       .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 60 })
+      .jpeg({ quality: 65 })
       .toBuffer();
 
-    const base64Image = compressedBuffer.toString('base64');
-    const dataUrl = `data:image/jpeg;base64,${base64Image}`;
-
-    // 2. Check deduplication cache using content hash
+    // 2. Check deduplication cache
     const imageHash = crypto.createHash('md5').update(compressedBuffer).digest('hex');
     if (analysisCache.has(imageHash)) {
-      console.log('[Ingest] Cache HIT — skipping Together AI call entirely.');
-      const cachedAnalysis = analysisCache.get(imageHash)!;
-      await pushToSupermemory(cachedAnalysis, publicUrl);
-      
-      return NextResponse.json({ 
-        success: true, 
-        analysis: cachedAnalysis,
-        supermemorySuccess: true,
-        cached: true
-      }, { status: 200 });
+      console.log('[Ingest] Cache HIT — skipping Gemini call.');
+      const cached = analysisCache.get(imageHash)!;
+      const smResult = await pushToSupermemory(cached, publicUrl);
+      return NextResponse.json({ success: true, analysis: cached, supermemorySuccess: smResult.success, cached: true });
     }
 
-    // 3. Enforce rate limiter
-    const now = Date.now();
-    const elapsed = now - lastApiCall;
-    if (elapsed < MIN_GAP_MS) {
-      const waitMs = MIN_GAP_MS - elapsed;
-      console.log(`[Ingest] Rate limiter: waiting ${waitMs}ms before calling Together AI...`);
-      await new Promise(resolve => setTimeout(resolve, waitMs));
+    // 3. Rate limit check
+    const rl = checkRateLimit();
+    if (!rl.allowed) {
+      const waitSec = Math.ceil(rl.waitMs / 1000);
+      console.log(`[Ingest] Rate limit reached. User must wait ${waitSec}s.`);
+      return NextResponse.json({
+        error: `GraspAI is processing too fast! Free tier allows 5 images per minute. Please wait ${waitSec} seconds and try again.`,
+        retryAfterMs: rl.waitMs,
+      }, { status: 429 });
     }
 
-    // 4. Prepare prompt with strict JSON requirements
-    const systemPrompt = `You are an expert AI extraction engine. Your task is to deeply analyze the provided image and extract intent and context in strict JSON format. Do NOT miss critical details. Do NOT hallucinate or add non-existent points.
-For "deadline": ONLY extract if explicitly visible, as YYYY-MM-DD. Otherwise null.
-For "chain_id": use a consistent, logical slug so related images cluster together (e.g. all database notes use "database_notes", all ML diagrams use "ml_architecture").
-Respond ONLY with a valid JSON object matching this exact schema:
+    // 4. Build the deep-extraction prompt — ULTRA-STRICT anti-hallucination
+    const prompt = `You are GraspAI, an expert image analysis engine. Analyze this image and extract ONLY what is actually visible.
+
+ABSOLUTE RULES — VIOLATION MEANS FAILURE:
+
+1. DEADLINE RULE (MOST IMPORTANT):
+   - Set "deadline" to a date string ONLY if you can see an explicit, complete date written on the image (e.g. "May 15, 2026", "15/05/2026", "2026-05-15", "April 30").
+   - If the image says vague things like "in 3 days", "next week", "soon", "ASAP" — set "deadline" to null and set "urgency" to "due_soon".
+   - If there is NO date and NO urgency language — set "deadline" to null and "urgency" to "none".
+   - NEVER compute or calculate a date. NEVER guess. NEVER invent a date that isn't literally printed on the image.
+   
+   WRONG: Image says "Apply within 3 days" → deadline: "2026-05-18"  ← THIS IS HALLUCINATION
+   RIGHT: Image says "Apply within 3 days" → deadline: null, urgency: "due_soon"
+   RIGHT: Image says "Deadline: April 30" → deadline: "2026-04-30", urgency: "none"
+
+2. CONTENT RULE: Extract ONLY text and information visible in the image. Never add context from your training data.
+
+3. CHAIN_ID RULE: Use a short consistent slug so the SAME topic always gets the SAME chain_id:
+   - Database notes, queries, ER diagrams → "database_notes"
+   - Machine learning, neural networks → "ml_architecture"  
+   - Internship/job listings → "internship_applications"
+   - Thermodynamics, heat engines → "thermodynamics_notes"
+
+4. CATEGORY RULE:
+   - "whats_next" → job applications, events, tasks with deadlines or urgency
+   - "working_on" → study notes, lecture content, diagrams, code
+   - "other" → receipts, bills, contacts, miscellaneous
+
+Return this exact JSON schema:
 {
-  "intent": "study_material | job_application | event_attendance | general_note | receipt | contact_info",
-  "subject": "Primary topic (under 10 words)",
+  "intent": "study_material | job_application | event_attendance | general_note | receipt | contact_info | project_diagram",
+  "subject": "Primary topic in under 10 words",
   "entities": {
-    "deadline": "YYYY-MM-DD or null",
+    "deadline": "YYYY-MM-DD or null (ONLY if explicitly written)",
+    "urgency": "due_soon | none",
     "topic": "Specific sub-topic",
-    "urls": ["url1"],
-    "locations": ["loc1"],
-    "key_people": ["person1"]
+    "urls": ["any URLs visible"],
+    "locations": ["any locations mentioned"],
+    "key_people": ["any people/organizations mentioned"],
+    "key_terms": ["keyword1", "keyword2", "keyword3"]
   },
-  "raw_text": "Brief accurate OCR summary",
-  "chain_id": "logical_group_slug",
+  "raw_text": "Accurate transcription of key visible text",
+  "chain_id": "semantic_group_slug",
+  "category": "whats_next | working_on | other",
   "priority_weight": 0.0 to 1.0,
-  "logical_transition": "How this connects to related content",
-  "suggested_action": "Proactive next step for user",
+  "suggested_action": "What the user should do next with this image",
   "confidence_score": 0.0 to 1.0,
-  "detected_language": "Two-letter code"
+  "detected_language": "en"
 }`;
 
-    // 5. Execute Together AI call
-    console.log('[Ingest] Calling Together AI (Llama 3.2 Vision)...');
-    lastApiCall = Date.now();
-    let parsedAnalysis: AnalyzeIntentResponse | null = null;
-    
-    try {
-      const response = await together.chat.completions.create({
-        model: "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: systemPrompt },
-              { type: "image_url", image_url: { url: dataUrl } }
-            ]
-          }
-        ],
-        max_tokens: 1024,
+    // 5. Call Gemini 3.1 Flash Lite
+    console.log('[Ingest] Calling Gemini 3.1 Flash Lite...');
+    callTimestamps.push(Date.now());
+
+    const base64Image = compressedBuffer.toString('base64');
+
+    const model = genAI.getGenerativeModel({ 
+      model: 'gemini-3.1-flash-lite',
+      generationConfig: {
+        responseMimeType: 'application/json',
         temperature: 0.1,
-        top_p: 0.9,
-      });
-
-      let responseText = response.choices[0]?.message?.content || "";
-      console.log('[Ingest] Together AI response received.');
-      
-      // Clean up markdown formatting if the model wrapped it in ```json ... ```
-      responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-
-      try {
-        parsedAnalysis = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('Failed to parse JSON from Together AI:', responseText);
-        return NextResponse.json({ error: 'Invalid JSON returned from model', rawResponse: responseText }, { status: 500 });
+        maxOutputTokens: 1024,
       }
-    } catch (apiError: any) {
-      console.error('[Ingest] Together AI Error:', apiError.message);
-      
-      if (apiError.message?.includes('402') || apiError.message?.includes('credit_limit')) {
-         return NextResponse.json({ 
-           error: `Together AI API Error: 402 Credit limit exceeded. You must add a payment method at api.together.ai/settings/billing to unlock your free credits.` 
-         }, { status: 402 });
-      }
-      return NextResponse.json({ error: `Together AI API Error: ${apiError.message}` }, { status: 500 });
-    }
+    });
 
-    if (!parsedAnalysis) {
-      return NextResponse.json({ error: 'Failed to get analysis from model.' }, { status: 500 });
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          mimeType: 'image/jpeg',
+          data: base64Image,
+        }
+      }
+    ]);
+
+    const responseText = result.response.text();
+    console.log('[Ingest] Gemini response received.');
+
+    let parsedAnalysis: AnalysisResult;
+    try {
+      parsedAnalysis = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('[Ingest] JSON parse failed. Raw:', responseText);
+      return NextResponse.json({ error: 'Invalid JSON from Gemini', rawResponse: responseText }, { status: 500 });
     }
 
     // 6. Cache the result
@@ -166,47 +188,68 @@ Respond ONLY with a valid JSON object matching this exact schema:
     // 7. Push to Supermemory
     const smResult = await pushToSupermemory(parsedAnalysis, publicUrl);
 
-    return NextResponse.json({ 
-      success: true, 
+    return NextResponse.json({
+      success: true,
       analysis: parsedAnalysis,
       supermemorySuccess: smResult.success,
-      supermemoryError: smResult.error
-    }, { status: 200 });
-    
+      supermemoryError: smResult.error,
+    });
+
   } catch (error: any) {
-    console.error('API Route Error:', error.message);
-    return NextResponse.json(
-      { error: error.message || 'Internal Server Error' },
-      { status: 500 }
-    );
+    console.error('[Ingest] Error:', error.message);
+    
+    // Handle Gemini rate limit errors gracefully
+    if (error.message?.includes('429') || error.message?.includes('RESOURCE_EXHAUSTED')) {
+      return NextResponse.json({
+        error: 'Gemini daily limit reached. The free tier allows ~1500 requests/day. Please try again in a few minutes, or wait until the quota resets.',
+      }, { status: 429 });
+    }
+
+    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }
 
-// Helper: push analysis to Supermemory knowledge graph
-async function pushToSupermemory(analysis: AnalyzeIntentResponse, publicUrl: string): Promise<{ success: boolean; error: string | null }> {
+// ──────────────── Supermemory Integration ────────────────
+async function pushToSupermemory(analysis: AnalysisResult, publicUrl: string): Promise<{ success: boolean; error: string | null }> {
   try {
     if (!process.env.SUPERMEMORY_TOKEN) {
-      throw new Error("SUPERMEMORY_TOKEN is missing.");
+      throw new Error('SUPERMEMORY_TOKEN is missing.');
     }
 
-    const response = await fetch("https://api.supermemory.ai/v3/documents", {
-      method: "POST",
-      headers: { 
-        "Content-Type": "application/json", 
-        "Authorization": `Bearer ${process.env.SUPERMEMORY_TOKEN}` 
+    // Build rich semantic content for Supermemory vector indexing
+    const keyTerms = analysis.entities?.key_terms?.join(', ') || '';
+    const content = [
+      `[${analysis.intent}] ${analysis.subject}`,
+      `Category: ${analysis.category}`,
+      `Topic: ${analysis.entities?.topic || 'General'}`,
+      `Key Terms: ${keyTerms}`,
+      `Text: ${analysis.raw_text}`,
+      `Action: ${analysis.suggested_action}`,
+      `Chain: ${analysis.chain_id}`,
+      analysis.entities?.deadline ? `Deadline: ${analysis.entities.deadline}` : '',
+      analysis.entities?.key_people?.length ? `People: ${analysis.entities.key_people.join(', ')}` : '',
+    ].filter(Boolean).join('. ');
+
+    const response = await fetch('https://api.supermemory.ai/v3/documents', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.SUPERMEMORY_TOKEN}`,
       },
       body: JSON.stringify({
-        content: `[${analysis.intent}] ${analysis.subject}: ${analysis.raw_text}. Action: ${analysis.suggested_action}. Chain: ${analysis.chain_id}`,
+        content,
         metadata: {
           url: publicUrl,
           subject: analysis.subject,
-          deadline: analysis.entities.deadline || '',
+          deadline: analysis.entities?.deadline || '',
           chain_id: analysis.chain_id,
           intent: analysis.intent,
+          category: analysis.category,
           priority_weight: analysis.priority_weight,
-          topic: analysis.entities.topic
-        }
-      })
+          topic: analysis.entities?.topic || '',
+          key_terms: keyTerms,
+        },
+      }),
     });
 
     if (!response.ok) {
@@ -217,7 +260,7 @@ async function pushToSupermemory(analysis: AnalyzeIntentResponse, publicUrl: str
     console.log('[Ingest] Supermemory ingestion succeeded.');
     return { success: true, error: null };
   } catch (err: any) {
-    console.error("Supermemory Warning:", err.message);
+    console.error('[Ingest] Supermemory Warning:', err.message);
     return { success: false, error: err.message };
   }
 }

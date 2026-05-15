@@ -6,24 +6,38 @@ export interface FeedItem {
   title: string;
   description: string;
   deadline: string | null;
+  urgency: 'due_soon' | 'none';
   importance: number;
   imageUrl: string;
   intentType: string;
+  chainId: string;
+  category: 'whats_next' | 'working_on' | 'other';
+  createdAt: string;
+}
+
+export interface SavedCluster {
+  id: string;
+  title: string;
+  images: string[];
   chainId: string;
   createdAt: string;
 }
 
 interface AppState {
-  currentView: 'home' | 'other' | 'chat';
-  setCurrentView: (view: 'home' | 'other' | 'chat') => void;
+  currentView: 'home' | 'other' | 'chat' | 'collections';
+  setCurrentView: (view: 'home' | 'other' | 'chat' | 'collections') => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   feedItems: FeedItem[];
   addFeedItem: (item: FeedItem) => void;
+  // Saved clusters from chatbot
+  savedClusters: SavedCluster[];
+  addSavedCluster: (cluster: SavedCluster) => void;
+  deleteSavedCluster: (id: string) => void;
   // Image viewer state — supports single image OR cluster browsing
-  viewingImages: string[];         // Array of image URLs to browse
-  viewingImageIndex: number;       // Current index in the array
-  viewingClusterTitle: string;     // Title of the cluster being viewed
+  viewingImages: string[];
+  viewingImageIndex: number;
+  viewingClusterTitle: string;
   openImageViewer: (images: string[], startIndex?: number, title?: string) => void;
   closeImageViewer: () => void;
   nextImage: () => void;
@@ -32,17 +46,19 @@ interface AppState {
 
 const SUPABASE_BASE = 'https://gfasqzpxsxxvzhrgtjtq.supabase.co/storage/v1/object/public/grasp-moments/uploads';
 
-// All 7 Supabase images seeded with real analysis data from Supermemory
+// All 7 Supabase images seeded with categories dynamically assigned
 const initialSeed: FeedItem[] = [
   {
     id: "seed-1",
     title: "Google Frontend Developer Internship Application",
     description: "Review internship requirements and prepare application materials.",
     deadline: null,
+    urgency: "none",
     importance: 9,
     imageUrl: `${SUPABASE_BASE}/1778837035358_eval-job-hunt.jpg`,
     intentType: "job_application",
     chainId: "google_frontend_internship",
+    category: "whats_next",
     createdAt: "2026-05-15T09:24:03.000Z",
   },
   {
@@ -50,10 +66,12 @@ const initialSeed: FeedItem[] = [
     title: "Thermodynamics & Carnot Cycle Lecture Notes",
     description: "Review Carnot Cycle concepts, entropy, and heat engine formulas.",
     deadline: null,
+    urgency: "none",
     importance: 5,
     imageUrl: `${SUPABASE_BASE}/1778837045491_eval-thermo.jpg`,
     intentType: "study_material",
     chainId: "thermodynamics_notes",
+    category: "working_on",
     createdAt: "2026-05-15T09:24:11.000Z",
   },
   {
@@ -61,10 +79,12 @@ const initialSeed: FeedItem[] = [
     title: "Berghotel Grosse Scheidegg Meal Receipt",
     description: "Archive receipt for expense tracking — July 30, 2007",
     deadline: null,
+    urgency: "none",
     importance: 3,
     imageUrl: `${SUPABASE_BASE}/1778837053197_complex-receipt.jpg`,
     intentType: "receipt",
     chainId: "berghotel_receipt_2007",
+    category: "other",
     createdAt: "2026-05-15T09:24:20.000Z",
   },
   {
@@ -72,10 +92,12 @@ const initialSeed: FeedItem[] = [
     title: "Federated Knowledge Graph AI Platform Architecture",
     description: "Review agentic AI platform architecture diagram and design patterns.",
     deadline: null,
+    urgency: "none",
     importance: 6,
     imageUrl: `${SUPABASE_BASE}/1778837164122_e5d5c755-dc7d-4607-994b-0bec0f32fda6.png`,
     intentType: "study_material",
-    chainId: "federated_ai_architecture",  // Distinct from database_notes — this is ML architecture, not DBMS
+    chainId: "federated_ai_architecture",
+    category: "working_on",
     createdAt: "2026-05-15T09:26:19.000Z",
   },
   {
@@ -83,10 +105,12 @@ const initialSeed: FeedItem[] = [
     title: "Database Concurrency: Lost Update Anomaly",
     description: "Study concurrency control concepts and the lost update problem.",
     deadline: null,
+    urgency: "none",
     importance: 5,
     imageUrl: `${SUPABASE_BASE}/1778837355272_c9dfdd2f-70e4-4aed-a1e4-022b1837b4a3.png`,
     intentType: "study_material",
-    chainId: "database_notes",  // Grouped with seed-4 for cluster demo
+    chainId: "database_notes",
+    category: "working_on",
     createdAt: "2026-05-15T09:29:22.000Z",
   },
   {
@@ -94,10 +118,12 @@ const initialSeed: FeedItem[] = [
     title: "Geospatial Web App Development Notes",
     description: "Building map-based web applications with modern frameworks.",
     deadline: null,
+    urgency: "none",
     importance: 4,
     imageUrl: `${SUPABASE_BASE}/1778826178168_847ba418-84c9-4db9-a744-bb079fafc8e1.png`,
     intentType: "study_material",
     chainId: "geospatial_webapp",
+    category: "working_on",
     createdAt: "2026-05-15T08:02:58.000Z",
   },
   {
@@ -105,10 +131,12 @@ const initialSeed: FeedItem[] = [
     title: "Project Architecture Diagram",
     description: "System design and component architecture reference.",
     deadline: null,
+    urgency: "none",
     importance: 4,
     imageUrl: `${SUPABASE_BASE}/1778843046969_e06d5b05-6eb1-4775-8552-ae6770841f26.png`,
     intentType: "general_note",
     chainId: "project_architecture",
+    category: "working_on",
     createdAt: "2026-05-15T10:44:06.000Z",
   },
 ];
@@ -123,6 +151,14 @@ export const useStore = create<AppState>()(
       feedItems: initialSeed,
       addFeedItem: (item) => set((state) => ({ 
         feedItems: [item, ...state.feedItems] 
+      })),
+      // Saved clusters
+      savedClusters: [],
+      addSavedCluster: (cluster) => set((state) => ({
+        savedClusters: [cluster, ...state.savedClusters]
+      })),
+      deleteSavedCluster: (id) => set((state) => ({
+        savedClusters: state.savedClusters.filter(c => c.id !== id)
       })),
       // Image viewer — supports cluster browsing with prev/next
       viewingImages: [],
@@ -148,7 +184,7 @@ export const useStore = create<AppState>()(
       },
     }),
     {
-      name: 'grasp-storage-v4', // Force re-seed: fixed federated_ai vs database_notes clustering
+      name: 'grasp-storage-v6', // v6: added urgency field + strict deadline anti-hallucination
     }
   )
 );
