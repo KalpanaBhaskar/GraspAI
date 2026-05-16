@@ -38,9 +38,9 @@ GraspAI is a proactive **Intent Rescue** platform for students and professionals
 
 ## Features
 
-### Intent extraction (Together AI + Llama 3.2 Vision)
+### Intent extraction (Google Gemini 3.1 Flash Lite)
 
-Every upload runs through a multimodal pipeline powered by **[Together AI](https://www.together.ai/)** using **Meta Llama 3.2 Vision**. The model analyzes the image and returns strict JSON including:
+Every upload runs through a multimodal pipeline powered by **[Google Gemini](https://aistudio.google.com/)** using **Gemini 3.1 Flash Lite**. The model analyzes the image and returns strict JSON including:
 
 - **Intent type** — `study_material`, `job_application`, `event_attendance`, `receipt`, `contact_info`, `general_note`
 - **Subject & topic** — concise labels for search and clustering
@@ -104,7 +104,7 @@ flowchart LR
 
   subgraph Vision
     C --> D[Sharp compress]
-    D --> E["Together AI\nLlama 3.2 Vision"]
+    D --> E["Google Gemini\n3.1 Flash Lite"]
     E --> F[Structured intent JSON]
   end
 
@@ -123,7 +123,7 @@ flowchart LR
   H --> K
 ```
 
-**Two-pass intelligence:** fast vision reasoning (Together AI) is separated from long-term memory (Supermemory) and conversational synthesis (Gemini).
+**Two-pass intelligence:** fast vision reasoning (Gemini) is separated from long-term memory (Supermemory) and conversational synthesis (Gemini).
 
 ---
 
@@ -135,9 +135,9 @@ flowchart LR
 | Styling | Tailwind CSS 4, MUI 9, Framer Motion | Layout, icons, animations |
 | State | Zustand (persist) | Feed items, navigation, image viewer |
 | Storage | Supabase Storage | Public image URLs for memories |
-| Vision / intent | **Together AI** — `meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo` | Multimodal JSON extraction |
+| Vision / intent | **Google Gemini** — `gemini-3.1-flash-lite` | Multimodal JSON extraction |
 | Memory graph | Supermemory v3 API | Ingest documents + semantic search |
-| Chat answers | Google Gemini `gemini-2.0-flash-lite` | Grounded responses from retrieved context |
+| Chat answers | **Google Gemini** — `gemini-3.1-flash-lite` | Grounded responses from retrieved context |
 | Image processing | Sharp | Server-side resize/compress before vision API |
 
 ---
@@ -148,9 +148,8 @@ flowchart LR
 - **npm** 9+ (or pnpm / yarn)
 - Accounts & API keys for:
   - [Supabase](https://supabase.com/) (free tier works)
-  - [Together AI](https://api.together.ai/) (billing may be required for vision credits)
-  - [Supermemory](https://supermemory.ai/)
   - [Google AI Studio](https://aistudio.google.com/) (Gemini API key)
+  - [Supermemory](https://supermemory.ai/)
 
 ---
 
@@ -201,9 +200,8 @@ Create `.env.local` in the project root (never commit this file):
 |----------|----------|-------------|
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anonymous (public) key |
-| `TOGETHER_API_KEY` | Yes | Together AI key for Llama 3.2 Vision ingest |
+| `GEMINI_API_KEY` | Yes | Google AI key for vision ingest and chat |
 | `SUPERMEMORY_TOKEN` | Yes | Supermemory API bearer token |
-| `GEMINI_API_KEY` | Yes | Google AI key for chat responses |
 
 A template is provided in [`.env.example`](.env.example).
 
@@ -245,7 +243,7 @@ Deploy to [Vercel](https://vercel.com/) or any Node host; add the same environme
 
 ## Testing the ingest pipeline
 
-With the dev server running (`npm run dev`), verify the full **upload → Together AI → Supermemory** flow:
+With the dev server running (`npm run dev`), verify the full **upload → Gemini → Supermemory** flow:
 
 ```bash
 npx tsx scripts/test-ingest.ts
@@ -273,7 +271,7 @@ GraspAI/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── ingest/     # Together AI vision + Supermemory ingest
+│   │   │   ├── ingest/     # Gemini vision + Supermemory ingest
 │   │   │   └── chat/       # Supermemory RAG + Gemini answers
 │   │   ├── layout.tsx
 │   │   ├── page.tsx        # Main dashboard shell
@@ -340,10 +338,8 @@ GraspAI/
 
 ## Troubleshooting
 
-| Issue | Fix |
-|-------|-----|
-| `TOGETHER_API_KEY missing` | Add key to `.env.local`; restart dev server |
-| Together AI `402 Credit limit` | Add billing at [Together AI settings](https://api.together.ai/settings/billing) |
+| `GEMINI_API_KEY missing` | Add key to `.env.local`; restart dev server |
+| Gemini `429` / `Quota` | Check usage limits in [Google AI Studio](https://aistudio.google.com/) |
 | `SUPERMEMORY_TOKEN is missing` | Add token; required for ingest and chat |
 | Upload fails / no public URL | Check Supabase bucket name `grasp-moments` and RLS policies |
 | Chat returns empty context | Upload a few images first so Supermemory has documents to search |
